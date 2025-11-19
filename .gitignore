@@ -1,0 +1,92 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+.venv/
+.venv-gpu/
+venv/
+ENV/
+env/
+.virtualenv/
+
+# Triton cache
+.triton_cache/
+.triton/
+
+# Agent cache
+.claude/
+
+# Benchmark results and outputs (generated files)
+benchmark_results.json
+model_dim_results.json
+gpu_benchmark_output.txt
+gpu_full_results.txt
+results/*.json
+results/*.txt
+
+# Plots (generated - can be regenerated from benchmark data)
+plots/*.png
+plots/*.jpg
+plots/*.pdf
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+
+# LaTeX compiled PDFs (keep source, ignore compiled)
+# Exception: keep the reference paper
+report.pdf
+*.pdf
+!docs/flashattention-paper.pdf
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.spyproject/
+.ropeproject/
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# PyTorch & ML
+*.pth
+*.pt
+*.ckpt
+*.h5
+*.pkl
+*.pickle
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Keep these files/folders
+!README.md
+!requirements.txt
+!.gitignore
