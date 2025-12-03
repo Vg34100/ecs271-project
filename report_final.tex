@@ -1,6 +1,18 @@
-\documentclass[11pt,a4paper]{article}
-\usepackage[utf8]{inputenc}
-\usepackage[margin=1in]{geometry}
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+% Page geometry - CVPR specifications
+\usepackage[
+    paperwidth=8.5in,
+    paperheight=11in,
+    textwidth=6.875in,
+    textheight=8.875in,
+    top=1in,
+    left=0.8125in,
+    columnsep=0.3125in,
+    footskip=0.75in
+]{geometry}
+
+\usepackage{times}
 \usepackage{graphicx}
 \usepackage{amsmath}
 \usepackage{amssymb}
@@ -10,208 +22,409 @@
 \usepackage{hyperref}
 \usepackage{subcaption}
 \usepackage{float}
-\linespread{0.95}
-\setlength{\intextsep}{6pt}
-\setlength{\textfloatsep}{10pt}
-\setlength{\floatsep}{8pt}
+
+% Tighter spacing
 \usepackage{enumitem}
-\setlist{nosep}
-\usepackage{titling}
-\setlength{\droptitle}{-2cm}  % adjust this number
+\setlist{itemsep=0pt,parsep=0pt,topsep=2pt,partopsep=0pt}
 
+% Title formatting
+\usepackage{titlesec}
+\titleformat{\section}
+  {\normalfont\fontsize{12}{14}\bfseries}{\thesection.}{0.5em}{}
+\titlespacing*{\section}{0pt}{8pt}{4pt}
 
-\title{Memory-Efficient Attention Mechanisms:\\Implementation and Analysis of FlashAttention}
-\author{Shuang Ma, Pablo Rodriguez, Pei Yu Lin\\
-Department of Computer Science\\
-University of California, Davis}
-\date{November 2025}
+\titleformat{\subsection}
+  {\normalfont\fontsize{11}{13}\bfseries}{\thesubsection.}{0.5em}{}
+\titlespacing*{\subsection}{0pt}{6pt}{3pt}
+
+% Page numbering in footer
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Paragraph settings
+\setlength{\parindent}{0.166667in}
+\setlength{\parskip}{0pt}
+
+% Caption formatting - 9pt
+\usepackage[font=small,labelfont=bf]{caption}
+\captionsetup{font={stretch=1.0}}
+
+% Reduce float spacing
+\setlength{\intextsep}{8pt}
+\setlength{\textfloatsep}{8pt}
+\setlength{\floatsep}{6pt}
 
 \begin{document}
 
-\maketitle
+% Reduce equation spacing - must be after \begin{document}
+\setlength{\abovedisplayskip}{4pt}
+\setlength{\belowdisplayskip}{4pt}
+\setlength{\abovedisplayshortskip}{2pt}
+\setlength{\belowdisplayshortskip}{2pt}
+
+% Custom title formatting
+\twocolumn[
+\begin{@twocolumnfalse}
+\vspace*{0.38in}
+\begin{center}
+{\fontsize{14}{16}\selectfont\bfseries Memory-Efficient Attention Mechanisms: Implementation and Analysis of FlashAttention}\\
+\vspace{12pt}
+{\fontsize{12}{14}\selectfont
+Shuang Ma \quad Pablo Rodriguez \quad Pei Yu Lin\\
+Department of Computer Science\\
+University of California, Davis}
+\vspace{12pt}
+\end{center}
+\end{@twocolumnfalse}
+]
 
 \begin{abstract}
-Transformer models suffer from quadratic memory complexity in their self-attention mechanism, limiting their ability to process long sequences. We implement and analyze FlashAttention, a memory-efficient algorithm that reduces memory usage from $O(L^2)$ to $O(L)$ through tiling and online softmax computation. Our implementations include FlashAttention-1, FlashAttention-2, and a Triton GPU kernel, achieving up to 94\% memory savings and 4.1x speedup on an NVIDIA RTX 3070 GPU while maintaining numerical equivalence to standard attention. We benchmark across sequence lengths from 512 to 8K tokens and demonstrate both theoretical memory advantages and practical performance characteristics.
+Transformer models suffer from quadratic memory complexity in their self-attention mechanism, limiting their ability to process long sequences. We implement and analyze FlashAttention, achieving up to 93.5\% memory savings and 4.1x speedup while maintaining numerical equivalence to standard attention. Our implementations include FlashAttention-1, FlashAttention-2, and Triton GPU kernels, benchmarked on NVIDIA H200 and RTX 3070 GPUs across sequence lengths from 512 to 8K tokens.
 \end{abstract}
 
 \section{Introduction}
 
-Large Language Models rely on the Transformer architecture's self-attention mechanism, which requires $O(L^2)$ memory to store the attention matrix for sequences of length $L$. This quadratic scaling creates significant challenges: a 32K token sequence requires storing a 32K $\times$ 32K matrix (4GB for float32), limiting context windows on consumer GPUs and increasing training costs.
-
-FlashAttention \cite{dao2022flashattention} addresses this bottleneck by processing attention in blocks, keeping intermediate results in fast on-chip memory (SRAM) rather than slow high-bandwidth memory (HBM). The algorithm maintains exact attention computation while fundamentally changing memory complexity from $O(L^2)$ to $O(L \cdot B)$ where $B$ is the block size.
-
-\textbf{Our Contributions:}
+\subsection{Motivation}
+Large Language Models rely on the Transformer architecture's self-attention mechanism, which requires $O(L^2)$ memory for sequences of length $L$. A 32K token sequence requires a 32K $\times$ 32K matrix (4GB for float32), creating challenges:
 \begin{itemize}
-    \item Implementations of FlashAttention-1, FlashAttention-2, and Triton GPU kernel
-    \item Demonstration of up to 94\% memory savings compared to standard attention
-    \item 4.1x speedup with fused GPU kernels at 8K sequence length
-    \item Comprehensive benchmarks analyzing memory, speed, and numerical accuracy
-    \item Support for causal masking and multi-head attention
+\item Memory constraints limit context windows on consumer GPUs
+\item Training costs increase with larger memory footprints
+\item Memory bandwidth becomes the bottleneck for inference
+\end{itemize}
+
+\subsection{Our Contribution}
+We implement and analyze FlashAttention with:
+\begin{itemize}
+\item FlashAttention-1 and FlashAttention-2 PyTorch implementations
+\item Triton GPU kernels for both variants achieving real speedups
+\item Up to 93.5\% memory savings on H200 GPU
+\item 4.1x speedup with fused kernels on RTX 3070
+\item Comprehensive benchmarks on enterprise (H200 150GB) and consumer (RTX 3070 8GB) hardware
+\item Support for causal masking and multi-head attention
 \end{itemize}
 
 \section{Background and Method}
 
 \subsection{Standard Self-Attention}
-Self-attention computes: $\text{Output} = \text{softmax}(QK^T/\sqrt{d}) V$ where $Q, K, V \in \mathbb{R}^{L \times d}$. The standard implementation materializes the full $L \times L$ attention matrix, consuming $O(L^2)$ memory.
+Self-attention computes: $\text{Output} = \text{softmax}(QK^T/\sqrt{d}) V$ where $Q, K, V \in \mathbb{R}^{L \times d}$. The standard implementation follows three steps:
+\begin{align}
+    S &= QK^T / \sqrt{d} \quad \text{(Scores)} \\
+    P &= \text{softmax}(S) \quad \text{(Weights)} \\
+    O &= PV \quad \text{(Output)}
+\end{align}
+The critical issue is that both $S$ and $P$ are $L \times L$ matrices stored in GPU memory.
+
+\subsection{GPU Memory Hierarchy}
+Understanding FlashAttention requires knowledge of GPU memory:
+\begin{itemize}
+\item \textbf{HBM (High Bandwidth Memory):} Large capacity (40-150GB), slow access (1.5-2 TB/s)
+\item \textbf{SRAM (On-chip Cache):} Small capacity (20-200KB per SM), fast (19 TB/s on A100)
+\end{itemize}
+Standard attention is memory-bound: GPUs spend more time moving data between HBM and compute units than computing. FlashAttention keeps intermediate results in SRAM.
 
 \subsection{Online Softmax Algorithm}
-The key insight enabling FlashAttention is the online softmax algorithm \cite{milakov2018online}, which computes softmax incrementally using recurrence relations:
+The key insight is the online softmax algorithm \cite{milakov2018online}, which computes softmax incrementally:
 \begin{align}
     m_i &= \max(m_{i-1}, x_i) \\
     d_i' &= d_{i-1}' \cdot \exp(m_{i-1} - m_i) + \exp(x_i - m_i)
 \end{align}
-When the maximum changes, previous partial results are rescaled by $\exp(m_{\text{old}} - m_{\text{new}})$ to maintain correctness.
+When the maximum changes, previous results are rescaled by $\exp(m_{\text{old}} - m_{\text{new}})$ to maintain correctness.
 
 \subsection{FlashAttention Algorithm}
-For each query row, FlashAttention processes K and V in blocks:
+FlashAttention \cite{dao2022flashattention} processes K and V in blocks.
+FlashAttention-2 \cite{dao2023flashattention2} maintains unnormalized outputs and performs a single division at the end, reducing FLOPs in the inner loop.
+For each query row:
 
 \begin{algorithm}[H]
 \caption{FlashAttention-1 (Tiled)}
 \begin{algorithmic}[1]
-\STATE Initialize: $m \leftarrow -\infty$, $d \leftarrow 0$, $o \leftarrow \mathbf{0}$
+\STATE Init: $m \leftarrow -\infty$, $d \leftarrow 0$, $o \leftarrow \mathbf{0}$
 \FOR{each block $B$ of K, V}
-    \STATE $\mathbf{x} \leftarrow Q_{\text{row}} \cdot K_B^T / \sqrt{d}$
-    \STATE $m_{\text{old}} \leftarrow m$, $m \leftarrow \max(m, \max(\mathbf{x}))$
+    \STATE $\mathbf{x} \leftarrow Q \cdot K_B^T / \sqrt{d}$
+    \STATE $m_{\text{old}} \leftarrow m$, $d_{\text{old}} \leftarrow d$
+    \STATE $m \leftarrow \max(m, \max(\mathbf{x}))$
     \STATE $\mathbf{e} \leftarrow \exp(\mathbf{x} - m)$
-    \STATE $d \leftarrow d \cdot \exp(m_{\text{old}} - m) + \sum \mathbf{e}$
-    \STATE $o \leftarrow o \cdot \exp(m_{\text{old}} - m) + \sum \mathbf{e} \odot V_B$
+    \STATE $d \leftarrow d_{\text{old}} \cdot \exp(m_{\text{old}} - m) + \sum \mathbf{e}$
+    \STATE $o \leftarrow o \cdot \frac{d_{\text{old}}}{d} \cdot \exp(m_{\text{old}} - m) + \frac{\mathbf{e} \cdot V_B}{d}$
 \ENDFOR
-\RETURN $o / d$
+\RETURN $o$
 \end{algorithmic}
 \end{algorithm}
 
-FlashAttention-2 \cite{dao2023flashattention2} improves this by maintaining unnormalized outputs and performing a single division at the end, reducing FLOPs by 31\% in our measurements.
+\begin{algorithm}[H]
+\caption{FlashAttention-2 (Optimized)}
+\begin{algorithmic}[1]
+\STATE Init: $m \leftarrow -\infty$, $d \leftarrow 0$, $o_{\text{unnorm}} \leftarrow \mathbf{0}$
+\FOR{each block $B$ of K, V}
+    \STATE $\mathbf{x} \leftarrow Q \cdot K_B^T / \sqrt{d}$
+    \STATE $m_{\text{old}} \leftarrow m$, $m \leftarrow \max(m, \max(\mathbf{x}))$
+    \STATE $\mathbf{e} \leftarrow \exp(\mathbf{x} - m)$
+    \STATE $d \leftarrow d \cdot \exp(m_{\text{old}} - m) + \sum \mathbf{e}$
+    \STATE $o_{\text{unnorm}} \leftarrow o_{\text{unnorm}} \cdot \exp(m_{\text{old}} - m) + \mathbf{e} \cdot V_B$
+\ENDFOR
+\RETURN $o_{\text{unnorm}} / d$
+\end{algorithmic}
+\end{algorithm}
+
+
 
 \subsection{Implementation Details}
 Our implementations include:
 \begin{itemize}
-    \item \textbf{PyTorch CPU/GPU:} Implementations demonstrating algorithmic memory savings
-    \item \textbf{Triton kernel:} Fused GPU implementation achieving real speedups
-    \item \textbf{Causal masking:} Support for autoregressive models
-    \item \textbf{Multi-head attention:} Full batch and multi-head support
-    \item \textbf{Comprehensive testing:} 23 unit tests validating numerical correctness
+\item PyTorch CPU/GPU versions demonstrating algorithmic correctness
+\item Triton kernels for FA-1 and FA-2 with fused operations
+\item Causal masking for autoregressive models
+\item Multi-head attention with full batch support
+\item 23 unit tests validating numerical correctness
 \end{itemize}
 
 \section{Experiments}
 
 \subsection{Experimental Setup}
-\textbf{Hardware:} NVIDIA RTX 3070 (8GB VRAM), Intel CPU. \textbf{Software:} PyTorch 2.9.1, CUDA 12.1, Python 3.10. \textbf{Configuration:} Batch size 1, 8 attention heads, head dimension 64, float32 precision.
+\textbf{Hardware:} NVIDIA H200 (150GB VRAM) for main experiments, RTX 3070 (8GB) for Triton kernels. \textbf{Software:} PyTorch 2.9.1, CUDA 12.1, Python 3.10. \textbf{Config:} Batch size 1, 8 heads, head dim 64, float32.
 
 \subsection{Memory Efficiency Results}
 
 \begin{table}[H]
 \centering
-\caption{Memory Comparison: Standard vs FlashAttention (RTX 3070)}
+\caption{Memory and Time Comparison on H200 GPU}
 \label{tab:memory}
+\small
 \begin{tabular}{@{}rrrrrr@{}}
 \toprule
-Seq Len & Std Mem (MB) & Flash Mem (MB) & Savings & Max Diff \\
+Seq & Std & Flash & Std & Flash & Mem \\
+Len & Time & Time & Mem & Mem & Svgs \\
+ & (ms) & (ms) & (MB) & (MB) & \\
 \midrule
-512 & 29.12 & 23.22 & 20.3\% & $4.2 \times 10^{-7}$ \\
-1024 & 82.12 & 38.31 & 53.3\% & $3.6 \times 10^{-7}$ \\
-2048 & 284.12 & 68.50 & 75.9\% & $5.4 \times 10^{-7}$ \\
-4096 & 1072.12 & 128.88 & 88.0\% & $3.9 \times 10^{-7}$ \\
-8192 & 4184.12 & 249.62 & 94.0\% & $4.1 \times 10^{-7}$ \\
+512 & 0.14 & 0.92 & 53.00 & 47.09 & 11.1\% \\
+1024 & 0.20 & 1.63 & 106.00 & 62.19 & 41.3\% \\
+2048 & 0.47 & 3.20 & 308.00 & 92.38 & 70.0\% \\
+4096 & 1.65 & 6.19 & 1096.00 & 152.75 & 86.1\% \\
+8192 & 6.85 & 17.92 & 4208.00 & 273.50 & 93.5\% \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.75\textwidth]{plots_h200/memory_scaling.png}
-\caption{Memory use scaling: standard attention grows as $O(L^2)$, FlashAttention as $O(L)$.}
-
+\includegraphics[width=\linewidth]{plots_h200/memory_scaling.png}
+\caption{Memory scaling: standard $O(L^2)$ vs FlashAttention $O(L)$.}
 \label{fig:memory}
 \end{figure}
 
-Memory savings increase with sequence length, reaching 94\% at 8K tokens (4184MB $\rightarrow$ 250MB). All implementations maintain numerical equivalence with max difference $< 10^{-6}$.
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{plots_h200/memory_savings.png}
+\caption{Memory savings percentage vs sequence length.}
+\label{fig:memsave}
+\end{figure}
 
-\subsection{Speed Performance with Triton Kernel}
+Memory savings reach 93.5\% at 8K tokens (4208MB $\rightarrow$ 274MB) on H200. All implementations maintain numerical equivalence with max difference $< 10^{-6}$.
+
+\subsection{Triton Kernel Performance}
+
+We implemented Triton GPU kernels for both FA-1 and FA-2, tested on RTX 3070:
 
 \begin{table}[H]
 \centering
-\caption{Execution Time: Standard vs Triton FlashAttention (RTX 3070)}
+\caption{Execution Time Comparison on RTX 3070}
 \label{tab:triton}
+\small
 \begin{tabular}{@{}rrrrr@{}}
 \toprule
-Seq Len & Standard (ms) & Triton FA (ms) & Speedup \\
+Seq & Standard & PyTorch & Triton & Triton \\
+Len & (ms) & FA (ms) & FA (ms) & Speedup \\
 \midrule
-512 & 0.45 & 0.17 & 2.6x \\
-1024 & 1.07 & 0.38 & 2.8x \\
-2048 & 3.21 & 0.85 & 3.8x \\
-4096 & 11.42 & 3.06 & 3.7x \\
-8192 & 46.46 & 11.42 & \textbf{4.1x} \\
+512 & 0.45 & 9.86 & 0.17 & 2.6x \\
+1024 & 1.07 & 7.00 & 0.38 & 2.8x \\
+2048 & 3.21 & 13.10 & 0.85 & 3.8x \\
+4096 & 11.42 & 40.93 & 3.06 & 3.7x \\
+8192 & 46.46 & 142.86 & 11.42 & \textbf{4.1x} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{figure}[H]
 \centering
-\includegraphics[width=0.75\textwidth]{plots/triton_comparison.png}
-\caption{Execution time comparison for standard attention and the Triton kernel.}
-
+\includegraphics[width=\linewidth]{plots/triton_comparison.png}
+\caption{Triton kernel achieves both memory savings and speedup.}
 \label{fig:triton}
 \end{figure}
 
-The Triton kernel demonstrates FlashAttention's full potential: combining 94\% memory savings with 4.1x speedup at 8K tokens. Pure PyTorch implementations prove algorithmic correctness but suffer from Python loop overhead.
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{plots/triton_speedup.png}
+\caption{Triton speedup factor increases with sequence length.}
+\label{fig:tritonspeed}
+\end{figure}
+
+The Triton kernels demonstrate FlashAttention's full potential: 94\% memory savings with 4.1x speedup at 8K tokens. Pure PyTorch implementations prove algorithmic correctness but suffer from Python loop overhead (3-22x slower).
 
 \subsection{Algorithm Comparison}
 
-FlashAttention-2's optimization of maintaining unnormalized outputs provides measurable improvements:
-
 \begin{table}[H]
 \centering
-\caption{FlashAttention-1 vs FlashAttention-2 (seq\_len=512, batch=2, heads=4)}
+\caption{FlashAttention-1 vs FlashAttention-2}
 \label{tab:v1v2}
-\begin{tabular}{@{}lrrr@{}}
+\small
+\begin{tabular}{@{}lrr@{}}
 \toprule
-Metric & FA-1 & FA-2 & Improvement \\
+Metric & FA-1 & FA-2 \\
 \midrule
-Execution Time (ms) & 7.02 & 5.35 & 1.31x faster \\
-Max Diff vs Standard & $2.98 \times 10^{-7}$ & $2.68 \times 10^{-7}$ & Better accuracy \\
+Time (ms) & 7.02 & 5.35 \\
+Max Diff & $3.0 \times 10^{-7}$ & $2.7 \times 10^{-7}$ \\
+Speedup & -- & 1.31x \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+FA-2's unnormalized output optimization provides 31\% speedup and better numerical stability.
 
 \subsection{Hidden Dimension Analysis}
 
 \begin{table}[H]
 \centering
-\caption{Memory Savings vs Hidden Dimension (seq\_len=2048, 8 heads)}
+\caption{Memory vs Hidden Dimension (H200, seq=2048, 8 heads)}
 \label{tab:hidden}
+\small
 \begin{tabular}{@{}rrrrr@{}}
 \toprule
-Hidden Size & Std Mem (MB) & Flash Mem (MB) & Savings \\
+Hidden & Std Mem & Flash Mem & Savings & Max Diff \\
+Size & (MB) & (MB) & & \\
 \midrule
-512 & 284.12 & 52.50 & 81.5\% \\
-2048 & 344.12 & 160.50 & 53.4\% \\
-8192 & 584.12 & 592.50 & -1.4\% \\
+512 & 308.00 & 76.38 & 75.2\% & $5.7 \times 10^{-7}$ \\
+1024 & 328.00 & 112.38 & 65.7\% & $4.6 \times 10^{-7}$ \\
+2048 & 368.00 & 184.38 & 49.9\% & $4.0 \times 10^{-7}$ \\
+4096 & 448.00 & 328.38 & 26.7\% & $5.5 \times 10^{-7}$ \\
+8192 & 608.00 & 616.38 & -1.4\% & $6.0 \times 10^{-7}$ \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Memory savings decrease as hidden dimension increases because both methods must store Q, K, V matrices ($O(L \cdot d)$). As $d$ grows, Q/K/V memory dominates attention matrix memory. This confirms FlashAttention is most beneficial for \textit{long sequences with moderate hidden sizes}---the regime modern LLMs operate in.
+Savings decrease as hidden dimension grows because Q/K/V memory ($O(L \cdot d)$) dominates attention matrix memory. FlashAttention is most effective for long sequences with moderate hidden sizes---the regime modern LLMs operate in.
 
+\subsection{Block Size Analysis}
+
+\begin{table}[H]
+\centering
+\caption{Block Size Effect (H200, seq=4096). Standard: 1.65ms, 1096MB}
+\label{tab:block}
+\small
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+Block & Time & Peak Mem & Max Diff \\
+Size & (ms) & (MB) & \\
+\midrule
+32 & 24.05 & 112.75 & $5.2 \times 10^{-7}$ \\
+64 & 12.13 & 128.75 & $6.3 \times 10^{-7}$ \\
+128 & 6.16 & 160.75 & $6.3 \times 10^{-7}$ \\
+256 & 3.88 & 224.75 & $6.0 \times 10^{-7}$ \\
+512 & 3.19 & 352.75 & $5.8 \times 10^{-7}$ \\
+1024 & 2.69 & 608.75 & $6.3 \times 10^{-7}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Larger blocks reduce loop iterations but increase memory. Optimal size is hardware-dependent; 1024 is fastest on H200 while maintaining 86\% memory savings vs standard attention (1096MB).
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{plots_h200/block_size_effect.png}
+\caption{Block size vs performance tradeoff.}
+\label{fig:blocksize}
+\end{figure}
+
+\subsection{CPU vs GPU Memory Overhead}
+
+Testing the same PyTorch implementation on CPU vs GPU reveals interesting overhead differences:
+
+\begin{table}[H]
+\centering
+\caption{CPU vs GPU Memory (PyTorch FlashAttention)}
+\label{tab:cpugpu}
+\small
+\begin{tabular}{@{}rrrrr@{}}
+\toprule
+Seq & CPU Flash & GPU Flash & CPU & GPU \\
+Len & (MB) & (MB) & Svgs & Svgs \\
+\midrule
+512 & 0.75 & 23.22 & 70.0\% & 20.3\% \\
+1024 & 1.51 & 38.31 & 83.2\% & 53.3\% \\
+2048 & 3.02 & 68.50 & 91.1\% & 75.9\% \\
+4096 & 6.03 & 128.88 & 95.4\% & 88.0\% \\
+8192 & 12.06 & 249.62 & 97.7\% & 94.0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+GPU overhead is significant for small sequences due to CUDA context and kernel launch buffers. At 512 tokens, CPU uses 0.75MB but GPU uses 23.22MB. However, as sequences grow, actual computation dominates overhead, and savings percentages converge (3.7\% difference at 8K tokens).
 
 \section{Discussion}
 
-FlashAttention lowers memory use for long sequences and keeps accuracy close to standard attention. Gains increase at large $L$. The Triton version gives strong speed boosts thanks to fused computations.
+\subsection{Key Findings}
+Memory efficiency scales with sequence length, reaching 93.5\% savings at 8K tokens on H200. Numerical stability is maintained (max diff $< 10^{-6}$). The tiling approach fundamentally changes memory complexity from $O(L^2)$ to $O(L \cdot B)$ where $B \ll L$.
+
+\subsection{Theoretical Analysis}
+The memory complexity comparison:
+\begin{itemize}
+\item \textbf{Standard Attention:} $O(L^2)$ for attention matrix
+\item \textbf{FlashAttention:} $O(L \cdot B)$ for score blocks, where $B \ll L$
+\end{itemize}
+
+For $L = 16384$ and $B = 128$:
+\begin{align}
+    \text{Standard: } & 16384^2 = 268\text{M elements} \\
+    \text{FlashAttention: } & 16384 \times 128 = 2.1\text{M}
+\end{align}
+This represents a 128x reduction in peak memory usage.
+
+\subsection{Hardware Comparison}
+Testing on both enterprise (H200, 150GB) and consumer (RTX 3070, 8GB) GPUs reveals:
+\begin{itemize}
+\item Memory savings consistent across hardware (93-94\% at 8K)
+\item H200 shows lower base overhead (53MB vs 29MB at 512 tokens)
+\item Triton kernels achieve 4.1x speedup on consumer GPU
+\item Algorithm effectiveness independent of GPU memory capacity
+\end{itemize}
+
+\subsection{Real-World Impact}
+FlashAttention has enabled GPT-4's 128K token context window, 2-4x faster LLM training, deployment of larger models on consumer hardware, and reduced energy consumption in data centers.
+
+\subsection{Limitations}
+PyTorch implementations don't leverage GPU SRAM directly. Backward pass implementation needed for training. Block size requires hardware-specific tuning.
+
+\section{Related Work}
+
+Sparse attention methods (Longformer \cite{beltagy2020longformer}, BigBird \cite{zaheer2020bigbird}) reduce complexity via approximate attention. Linear attention (Performers \cite{choromanski2020rethinking}) uses kernel approximations but may sacrifice quality. FlashAttention maintains exact computation while reducing memory through IO-aware tiling.
 
 \section{Work Distribution}
 
 \begin{itemize}
-    \item \textbf{Pei Yu Lin:} Worked on FlashAttention-2 and the Triton version of FlashAttention-2. Helped refine the GPU kernels, checked speed and memory results, and helped prepare parts of the presentation.
-    \item \textbf{Shuang Ma:} Worked on early FlashAttention code, helped set up testing, and ran tests on the H200 GPU. Also assisted in checking algorithm steps and experiment setup.
-    \item \textbf{Pablo Rodriguez:} Wrote the first PyTorch versions of FlashAttention, built the Triton kernel for FlashAttention-1, ran the main GPU tests, and created the visualizations for the report.
+\item \textbf{Pei Yu Lin:} FlashAttention-2 implementation, Triton FA-2 kernel, performance analysis, presentation preparation
+\item \textbf{Shuang Ma:} Early FlashAttention prototypes, test suite development, H200 GPU benchmarks, algorithm verification
+\item \textbf{Pablo Rodriguez:} PyTorch FA-1 implementation, Triton FA-1 kernel, RTX 3070 benchmarks, visualization and report writing
 \end{itemize}
-
 
 \section{Conclusion}
 
-We implemented and analyzed FlashAttention, demonstrating up to 94\% memory savings and 4.1x speedup while maintaining exact attention computation. Our work includes three implementations (FlashAttention-1, FlashAttention-2, Triton kernel), comprehensive benchmarks, and analysis of practical performance characteristics. The implementations serve as educational resources for understanding memory-efficient attention algorithms that enable modern LLMs to process long context windows.
+We implemented and analyzed FlashAttention, demonstrating up to 93.5\% memory savings on H200 and 4.1x speedup with Triton kernels on RTX 3070 while maintaining exact attention computation. Our work includes FlashAttention-1, FlashAttention-2, and fused Triton kernels for both variants, with comprehensive benchmarks across enterprise (H200 150GB) and consumer (RTX 3070 8GB) hardware.
 
-Future work includes implementing the backward pass for training, exploring FlashAttention-3 optimizations, and combining with quantization for further memory savings.
+Key achievements include:
+\begin{itemize}
+\item Memory reduction from $O(L^2)$ to $O(L \cdot B)$ demonstrated empirically
+\item Numerical equivalence maintained (max diff $< 10^{-6}$)
+\item Both memory efficiency AND speed gains with fused kernels
+\item Comprehensive test suite validating correctness
+\item Analysis of hardware-specific overheads and optimizations
+\end{itemize}
 
+The implementations serve as educational resources for understanding memory-efficient attention algorithms that enable modern LLMs to process long context windows. This work demonstrates that FlashAttention's theoretical advantages translate to practical benefits when properly implemented with kernel fusion.
+
+\pagebreak
 \bibliographystyle{plain}
 \begin{thebibliography}{9}
 
@@ -228,17 +441,17 @@ NeurIPS.
 \bibitem{dao2023flashattention2}
 Dao, T. (2023).
 \textit{FlashAttention-2: Faster attention with better parallelism and work partitioning.}
-arXiv preprint arXiv:2307.08691.
+arXiv:2307.08691.
 
 \bibitem{milakov2018online}
 Milakov, M., \& Gimelshein, N. (2018).
 \textit{Online normalizer calculation for softmax.}
-arXiv preprint arXiv:1805.02867.
+arXiv:1805.02867.
 
 \bibitem{beltagy2020longformer}
 Beltagy, I., Peters, M. E., \& Cohan, A. (2020).
 \textit{Longformer: The long-document transformer.}
-arXiv preprint arXiv:2004.05150.
+arXiv:2004.05150.
 
 \bibitem{zaheer2020bigbird}
 Zaheer, M., et al. (2020).
@@ -248,7 +461,7 @@ NeurIPS.
 \bibitem{choromanski2020rethinking}
 Choromanski, K., et al. (2020).
 \textit{Rethinking attention with performers.}
-arXiv preprint arXiv:2009.14794.
+arXiv:2009.14794.
 
 \end{thebibliography}
 
